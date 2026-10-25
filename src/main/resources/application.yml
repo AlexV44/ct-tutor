@@ -1,0 +1,32 @@
+server:
+  port: 8080
+
+spring:
+  datasource:
+    url: jdbc:postgresql://localhost:5432/ct_tutor_db
+    username: postgres
+    password: sunny_2006_
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    show-sql: true
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+  liquibase:
+    enabled: true
+    change-log: db/changelog/db.changelog-master.xml
+
+  springdoc:
+    swagger-ui:
+      path: /swagger-ui.html
+    api-docs:
+      path: /v3/api-docs
+
+openrouter:
+  api:
+    key: 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
+
+telegram:
+  bot:
+    token: "8918832369:AAF5SHUQ6LSzWKqbZ4ZVi1DsjTFbrw37HWM"
