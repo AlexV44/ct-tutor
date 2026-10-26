@@ -11,5 +11,5 @@ http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.6.xsd">
     <!-- Затем создаем таблицу запросов -->
     <include file="changes/001-create-tutor-requests-table.sql" relativeToChangelogFile="true"/>
     <include file="changes/003-create-subjects-and-plans.sql" relativeToChangelogFile="true"/>
-
+    <include file="changes/004-create-tasks-table.sql" relativeToChangelogFile="true"/>
 </databaseChangeLog>

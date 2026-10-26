@@ -5,7 +5,10 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.tutor.ct_tutor.dto.openrouter.OpenRouterRequest;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;
+import org.springframework.retry.annotation.Backoff;
+import org.springframework.retry.annotation.Retryable;
 import org.springframework.stereotype.Component;
+import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestClient;
 
 @Component
@@ -26,6 +29,11 @@ public class OpenRouterClient {
         this.objectMapper = objectMapper;
     }
 
+    @Retryable(
+            retryFor = { HttpClientErrorException.TooManyRequests.class }, // Перехватываем ошибку 429
+            maxAttempts = 3,                                                // Сделать до 3 попыток
+            backoff = @Backoff(delay = 3000, multiplier = 2)                // Пауза 3 сек, при следующем повторе умножается на 2 (3 сек -> 6 сек)
+    )
     public String send(OpenRouterRequest request) {
         try {
             String jsonResponse = restClient.post()

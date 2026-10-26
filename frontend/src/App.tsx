@@ -2,8 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Sparkles, Trophy, Rocket, MessageSquare,
-  Flame, Star, ChevronRight, Send, CheckCircle2, ArrowLeft, Search, Award,
-  Plus, Trash2, Edit2, BookOpen, Check, Circle, Clock
+  Star, ChevronRight, Send, CheckCircle2, ArrowLeft, Search, Award,
+  Plus, Trash2, Edit2, BookOpen, Check, Clock
 } from 'lucide-react';
 
 type Role = 'select' | 'student' | 'parent' | 'teacher';
@@ -31,9 +31,11 @@ interface Mission {
   completed: boolean;
 }
 
-interface Topic {
+interface TopicProgressDto {
+  topicId: string;
   title: string;
-  status: 'done' | 'in_progress' | 'locked';
+  orderIndex: number;
+  status: 'done' | 'in_progress' | 'not_started';
 }
 
 const STUDENT_ID = "93cafd4b-15ef-4a16-8092-28ee87100b46";
@@ -44,45 +46,9 @@ const ALL_SUBJECTS: SubjectItem[] = [
   { id: '2', slug: 'physics', name: 'Физика', icon: '⚡', description: 'Механика, электричество, оптика' },
   { id: '3', slug: 'russian', name: 'Русский язык', icon: '📚', description: 'Орфография, пунктуация, синтаксис' },
   { id: '4', slug: 'english', name: 'Английский язык', icon: '🇬🇧', description: 'Грамматика, лексика, чтение' },
-  { id: '5', slug: 'history', name: 'История Беларуси', icon: '🏛️', description: 'Даты, события, исторические личности' },
+  { id: '5', slug: 'history-belarus', name: 'История Беларуси', icon: '🏛️', description: 'Даты, события, исторические личности' },
   { id: '6', slug: 'chemistry', name: 'Химия', icon: '🧪', description: 'Органическая и неорганическая химия' },
 ];
-
-// ИИ-планы тем для предметов (генерируются под профиль)
-const SUBJECT_TOPICS: Record<string, Topic[]> = {
-  math: [
-    { title: 'Тригонометрические уравнения и тождества', status: 'done' },
-    { title: 'Производная функции и касательные', status: 'in_progress' },
-    { title: 'тереометрия: сечения многогранников', status: 'locked' },
-    { title: 'Параметры в уравнениях и неравенствах', status: 'locked' }
-  ],
-  russian: [
-    { title: 'Н и НН в суффиксах различных частей речи', status: 'done' },
-    { title: 'Правописание НЕ и НИ с разными частями речи', status: 'in_progress' },
-    { title: 'Пунктуация в сложных предложениях', status: 'locked' },
-    { title: 'Лексические нормы и паронимы', status: 'locked' }
-  ],
-  physics: [
-    { title: 'Кинематика материальной точки', status: 'done' },
-    { title: 'Законы сохранения в механике', status: 'in_progress' },
-    { title: 'Электростатика и постоянный ток', status: 'locked' }
-  ],
-  english: [
-    { title: 'Present & Past Tenses Active/Passive', status: 'done' },
-    { title: 'Conditionals (0, 1, 2, 3) & Wishes', status: 'in_progress' },
-    { title: 'Phrasal Verbs for CT', status: 'locked' }
-  ],
-  history: [
-    { title: 'Беларусь в составе Полоцкого княжества', status: 'done' },
-    { title: 'ВКЛ в XIV–XVI веках', status: 'in_progress' },
-    { title: 'Культура Беларуси в XIX веке', status: 'locked' }
-  ],
-  chemistry: [
-    { title: 'Строение атома и периодический закон', status: 'done' },
-    { title: 'Классы неорганических соединений', status: 'in_progress' },
-    { title: 'Органический синтез', status: 'locked' }
-  ]
-};
 
 export default function App() {
   const [role, setRole] = useState<Role>('select');
@@ -184,25 +150,19 @@ function RoleCard({ emoji, bg, title, desc, onClick }: { emoji: string; bg: stri
    2. ИНТЕРФЕЙС УЧЕНИКА
 ========================================== */
 function StudentView({ activeTab, setActiveTab, onBack }: { activeTab: StudentTab; setActiveTab: (t: StudentTab) => void; onBack: () => void }) {
-  // Избранные предметы
   const [favoriteSlugs, setFavoriteSlugs] = useState<string[]>(() => {
     const saved = localStorage.getItem('favorite_subjects');
     return saved ? JSON.parse(saved) : ['math', 'russian'];
   });
 
-  // Активный предмет для чата
   const [activeSubject, setActiveSubject] = useState<SubjectItem>(ALL_SUBJECTS[0]);
-
-  // Планы подготовки по предметам
   const [plans, setPlans] = useState<Record<string, ExamPlan>>({});
 
-  // Прогресс по каждому предмету (в процентах от 0 до 100)
   const [subjectProgress, setSubjectProgress] = useState<Record<string, number>>(() => {
     const saved = localStorage.getItem('subject_progress');
     return saved ? JSON.parse(saved) : { math: 35, russian: 50, physics: 20, english: 40, history: 30, chemistry: 15 };
   });
 
-  // Миссии для предметов
   const [missions, setMissions] = useState<Mission[]>([
     { id: '1', subjectSlug: 'math', text: 'Разобрать 3 задачи с параметром', completed: false },
     { id: '2', subjectSlug: 'math', text: 'Пройти тест по производным', completed: true },
@@ -218,18 +178,20 @@ function StudentView({ activeTab, setActiveTab, onBack }: { activeTab: StudentTa
     localStorage.setItem('subject_progress', JSON.stringify(subjectProgress));
   }, [subjectProgress]);
 
-  // Загружаем данные по избранным предметам с бэкенда
+  // Загружаем актуальные данные профиля / планов из БД по каждому предмету
   useEffect(() => {
+    const initDataVal = window.Telegram?.WebApp?.initData || "mock_init_data";
+
     favoriteSlugs.forEach(slug => {
-      fetch(`/api/exam-plan?studentId=${STUDENT_ID}&subject=${slug}`)
+      fetch(`/api/exam-plan?initData=${encodeURIComponent(initDataVal)}&subject=${slug}`)
         .then(res => res.ok ? res.json() : null)
         .then(data => {
-          if (data) {
+          if (data && !data.error) {
             setPlans(prev => ({
               ...prev,
               [slug]: {
                 subjectSlug: slug,
-                daysUntilExam: data.daysUntilExam,
+                daysUntilExam: data.daysUntilExam ?? data.examDaysLeft,
                 targetScore: data.targetScore,
                 calculatedScore: data.calculatedScore || Math.min(100, (data.targetScore || 60) - 10)
               }
@@ -259,27 +221,26 @@ function StudentView({ activeTab, setActiveTab, onBack }: { activeTab: StudentTa
     }));
 
     try {
-      await fetch('/api/exam-plan', {
+      const initData = window.Telegram?.WebApp?.initData || "mock_init_data";
+      await fetch('/api/profile/update', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          studentId: STUDENT_ID,
-          subjectSlug: slug,
-          days: days,
-          score: score
+          initData: initData,
+          subject: slug,
+          targetScore: score,
+          examDaysLeft: days
         })
       });
     } catch (e) {
-      console.error("Ошибка сохранения плана:", e);
+      console.error("Ошибка сохранения профиля в БД:", e);
     }
   };
 
-  // Переключение статуса миссии и увеличение прогресса предмета
   const toggleMission = (missionId: string) => {
     setMissions(prev => prev.map(m => {
       if (m.id === missionId) {
         const nextCompleted = !m.completed;
-        // Изменяем прогресс предмета на +/- 10%
         setSubjectProgress(sp => {
           const current = sp[m.subjectSlug] || 30;
           const updated = nextCompleted ? Math.min(100, current + 15) : Math.max(0, current - 15);
@@ -296,10 +257,11 @@ function StudentView({ activeTab, setActiveTab, onBack }: { activeTab: StudentTa
     setActiveTab('chat');
   };
 
-  // Расчет общего прогресса по всем избранным предметам
   const overallProgress = favoriteSlugs.length > 0
     ? Math.round(favoriteSlugs.reduce((acc, slug) => acc + (subjectProgress[slug] || 30), 0) / favoriteSlugs.length)
     : 0;
+
+  const initDataVal = window.Telegram?.WebApp?.initData || "mock_init_data";
 
   return (
     <div className="w-full flex-1 flex flex-col pb-20">
@@ -314,6 +276,7 @@ function StudentView({ activeTab, setActiveTab, onBack }: { activeTab: StudentTa
             onGoCatalog={() => setActiveTab('catalog')}
             missions={missions}
             onToggleMission={toggleMission}
+            initData={initDataVal}
           />
         </div>
 
@@ -326,7 +289,7 @@ function StudentView({ activeTab, setActiveTab, onBack }: { activeTab: StudentTa
         </div>
 
         <div className={activeTab === 'chat' ? 'block' : 'hidden'}>
-          <AiChatBox subject={activeSubject} />
+          <AiChatBox key={activeSubject.slug} subject={activeSubject} initData={initDataVal} />
         </div>
 
         <div className={activeTab === 'tests' ? 'block' : 'hidden'}>
@@ -358,14 +321,14 @@ function StudentView({ activeTab, setActiveTab, onBack }: { activeTab: StudentTa
   );
 }
 
-/* Главная вкладка: Избранные предметы + План тем ИИ + Миссии на сегодня */
 function StudentMainTab({
   favoriteSlugs,
   onRemoveFavorite,
   onStartStudy,
   onGoCatalog,
   missions,
-  onToggleMission
+  onToggleMission,
+  initData
 }: {
   favoriteSlugs: string[];
   onRemoveFavorite: (slug: string) => void;
@@ -373,24 +336,63 @@ function StudentMainTab({
   onGoCatalog: () => void;
   missions: Mission[];
   onToggleMission: (id: string) => void;
+  initData: string;
 }) {
   const favoriteSubjects = ALL_SUBJECTS.filter(s => favoriteSlugs.includes(s.slug));
   const [selectedPlanSlug, setSelectedPlanSlug] = useState<string>(favoriteSlugs[0] || 'math');
+  const [topics, setTopics] = useState<TopicProgressDto[]>([]);
+  const [loadingTopics, setLoadingTopics] = useState(false);
 
-  // Обновляем выбранный предмет для плана, если избранные изменились
   useEffect(() => {
     if (favoriteSlugs.length > 0 && !favoriteSlugs.includes(selectedPlanSlug)) {
       setSelectedPlanSlug(favoriteSlugs[0]);
     }
   }, [favoriteSlugs, selectedPlanSlug]);
 
-  const currentTopics = SUBJECT_TOPICS[selectedPlanSlug] || [];
-  const currentSubjectObj = ALL_SUBJECTS.find(s => s.slug === selectedPlanSlug);
+  // Динамическая загрузка тем с бэкенда для выбранного предмета
+  useEffect(() => {
+    if (!selectedPlanSlug) return;
+    setLoadingTopics(true);
+    fetch(`/api/topics?initData=${encodeURIComponent(initData)}&subject=${selectedPlanSlug}`)
+      .then(res => res.ok ? res.json() : [])
+      .then(data => {
+        if (Array.isArray(data)) {
+          setTopics(data);
+        }
+      })
+      .catch(err => console.error("Ошибка загрузки тем:", err))
+      .finally(() => setLoadingTopics(false));
+  }, [selectedPlanSlug, initData]);
+
+  // Клик по теме для смены статуса (например, начать изучение или отметить пройденной)
+  const handleTopicClick = async (topicId: string, currentStatus: string) => {
+    // Автоматическая логика: если была not_started, переводим в in_progress, если in_progress — в done
+    let nextStatus = 'in_progress';
+    if (currentStatus === 'in_progress') {
+      nextStatus = 'done';
+    } else if (currentStatus === 'done') {
+      nextStatus = 'not_started';
+    }
+
+    try {
+      const res = await fetch(`/api/topics/status?initData=${encodeURIComponent(initData)}&subject=${selectedPlanSlug}&topicId=${topicId}&status=${nextStatus}`, {
+        method: 'POST'
+      });
+      if (res.ok) {
+        const updated = await res.json();
+        if (Array.isArray(updated)) {
+          setTopics(updated);
+        }
+      }
+    } catch (e) {
+      console.error("Ошибка смены статуса темы:", e);
+    }
+  };
+
   const activeMissions = missions.filter(m => favoriteSlugs.includes(m.subjectSlug));
 
   return (
     <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="space-y-4">
-      {/* Баннер быстрых предметов */}
       <div className="bg-gradient-to-br from-indigo-600 via-blue-600 to-violet-600 text-white p-5 rounded-3xl shadow-xl shadow-blue-500/20">
         <div className="flex justify-between items-center mb-3">
           <h2 className="text-xl font-black">Мои предметы 🎯</h2>
@@ -439,7 +441,6 @@ function StudentMainTab({
         )}
       </div>
 
-      {/* Блок: План тем от ИИ с переключателем предметов */}
       <div className="bg-white/90 backdrop-blur-xl border border-white p-5 rounded-3xl shadow-xl shadow-indigo-100 space-y-3">
         <div className="flex items-center justify-between">
           <h3 className="font-extrabold text-sm text-indigo-950 flex items-center gap-2">
@@ -449,7 +450,6 @@ function StudentMainTab({
 
         {favoriteSlugs.length > 0 ? (
           <>
-            {/* Переключатель предметов для плана */}
             <div className="flex gap-1.5 overflow-x-auto pb-1 no-scrollbar">
               {favoriteSubjects.map(sub => (
                 <button
@@ -462,23 +462,33 @@ function StudentMainTab({
               ))}
             </div>
 
-            {/* Содержимое плана тем */}
             <div className="space-y-2 pt-1">
-              {currentTopics.map((topic, idx) => (
-                <div key={idx} className="bg-indigo-50/50 border border-indigo-100/70 p-3 rounded-2xl flex items-center justify-between gap-2">
-                  <div className="flex items-center gap-2.5 min-w-0">
-                    {topic.status === 'done' && <CheckCircle2 className="w-4 h-4 text-emerald-500 flex-shrink-0" />}
-                    {topic.status === 'in_progress' && <Clock className="w-4 h-4 text-amber-500 flex-shrink-0" />}
-                    {topic.status === 'locked' && <div className="w-4 h-4 rounded-full border-2 border-slate-300 flex-shrink-0" />}
-                    <span className={`text-xs font-bold truncate ${topic.status === 'done' ? 'line-through text-slate-400' : 'text-indigo-950'}`}>
-                      {topic.title}
+              {loadingTopics ? (
+                <p className="text-xs text-slate-400 text-center py-3">Загрузка тем из БД...</p>
+              ) : topics.length === 0 ? (
+                <p className="text-xs text-slate-400 text-center py-3">Темы не найдены</p>
+              ) : (
+                topics.map((topic) => (
+                  <div
+                    key={topic.topicId}
+                    onClick={() => handleTopicClick(topic.topicId, topic.status)}
+                    className="bg-indigo-50/50 border border-indigo-100/70 p-3 rounded-2xl flex items-center justify-between gap-2 cursor-pointer hover:border-indigo-300 transition-all"
+                    title="Нажмите, чтобы изменить статус"
+                  >
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      {topic.status === 'done' && <CheckCircle2 className="w-4 h-4 text-emerald-500 flex-shrink-0" />}
+                      {topic.status === 'in_progress' && <Clock className="w-4 h-4 text-amber-500 flex-shrink-0" />}
+                      {topic.status === 'not_started' && <div className="w-4 h-4 rounded-full border-2 border-slate-300 flex-shrink-0" />}
+                      <span className={`text-xs font-bold truncate ${topic.status === 'done' ? 'line-through text-slate-400' : 'text-indigo-950'}`}>
+                        {topic.title}
+                      </span>
+                    </div>
+                    <span className={`text-[10px] font-extrabold px-2 py-0.5 rounded-lg flex-shrink-0 ${topic.status === 'done' ? 'bg-emerald-100 text-emerald-700' : topic.status === 'in_progress' ? 'bg-amber-100 text-amber-700' : 'bg-slate-200 text-slate-600'}`}>
+                      {topic.status === 'done' ? 'Изучено' : topic.status === 'in_progress' ? 'В процессе' : 'Не пройдена'}
                     </span>
                   </div>
-                  <span className={`text-[10px] font-extrabold px-2 py-0.5 rounded-lg flex-shrink-0 ${topic.status === 'done' ? 'bg-emerald-100 text-emerald-700' : topic.status === 'in_progress' ? 'bg-amber-100 text-amber-700' : 'bg-slate-200 text-slate-600'}`}>
-                    {topic.status === 'done' ? 'Изучено' : topic.status === 'in_progress' ? 'В процессе' : 'Предстоит'}
-                  </span>
-                </div>
-              ))}
+                ))
+              )}
             </div>
           </>
         ) : (
@@ -486,7 +496,6 @@ function StudentMainTab({
         )}
       </div>
 
-      {/* Блок: Миссии на сегодня */}
       <div className="bg-white/90 backdrop-blur-xl border border-white p-5 rounded-3xl shadow-xl shadow-indigo-100 space-y-3">
         <h3 className="font-extrabold text-sm text-indigo-950 flex items-center gap-2">
           <Trophy className="w-4 h-4 text-amber-500" /> Миссии на сегодня
@@ -526,7 +535,6 @@ function StudentMainTab({
   );
 }
 
-/* Каталог предметов */
 function StudentCatalogTab({
   favoriteSlugs,
   onToggleFavorite,
@@ -578,7 +586,6 @@ function StudentCatalogTab({
   );
 }
 
-/* Вкладка Прогресс: Общая шкала + Индивидуальные шкалы по предметам */
 function StudentProgressTab({
   favoriteSlugs,
   plans,
@@ -596,7 +603,6 @@ function StudentProgressTab({
 
   return (
     <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="space-y-4">
-      {/* Общая шкала подготовки ко всем экзаменам */}
       <div className="bg-gradient-to-br from-indigo-600 via-blue-600 to-violet-600 text-white p-5 rounded-3xl shadow-xl shadow-blue-500/20 space-y-3">
         <div className="flex justify-between items-center">
           <div className="flex items-center gap-2">
@@ -618,7 +624,6 @@ function StudentProgressTab({
         </p>
       </div>
 
-      {/* Шкалы по каждому предмету */}
       <div className="bg-white/90 backdrop-blur-xl border border-white p-5 rounded-3xl shadow-xl shadow-indigo-100 space-y-4">
         <h3 className="font-extrabold text-base text-indigo-950 flex items-center gap-2">
           <Trophy className="w-5 h-5 text-amber-500" /> Прогресс по предметам
@@ -659,6 +664,15 @@ function SubjectProgressCard({
   const [daysInput, setDaysInput] = useState(plan?.daysUntilExam?.toString() || '60');
   const [scoreInput, setScoreInput] = useState(plan?.targetScore?.toString() || '80');
 
+  useEffect(() => {
+    if (plan?.daysUntilExam !== undefined && plan?.daysUntilExam !== null) {
+      setDaysInput(plan.daysUntilExam.toString());
+    }
+    if (plan?.targetScore !== undefined && plan?.targetScore !== null) {
+      setScoreInput(plan.targetScore.toString());
+    }
+  }, [plan]);
+
   const handleSave = () => {
     onSave(Number(daysInput) || 0, Number(scoreInput) || 0);
     setIsEditing(false);
@@ -679,7 +693,6 @@ function SubjectProgressCard({
         </button>
       </div>
 
-      {/* Шкала прогресса по предмету */}
       <div className="space-y-1.5 bg-white p-3 rounded-xl border border-indigo-100/60">
         <div className="flex justify-between text-xs font-bold">
           <span className="text-slate-600">Шкала освоения предмета</span>
@@ -719,7 +732,7 @@ function SubjectProgressCard({
             onClick={handleSave}
             className="w-full bg-indigo-600 text-white font-bold py-2 rounded-xl text-xs shadow-md shadow-indigo-500/20"
           >
-            Сохранить цели
+            Сохранить цели в БД
           </button>
         </div>
       ) : (
@@ -742,17 +755,14 @@ function SubjectProgressCard({
   );
 }
 
-/* Изолированный ИИ-чат по конкретному предмету */
-function AiChatBox({ subject }: { subject: SubjectItem }) {
+function AiChatBox({ subject, initData }: { subject: SubjectItem; initData: string }) {
   const storageKey = `ct_tutor_chat_${subject.slug}`;
 
   const [messages, setMessages] = useState(() => {
     try {
       const saved = localStorage.getItem(storageKey);
       if (saved) return JSON.parse(saved);
-    } catch (e) {
-      console.error("Ошибка загрузки истории чата:", e);
-    }
+    } catch (e) {}
     return [
       {
         id: '1',
@@ -767,9 +777,7 @@ function AiChatBox({ subject }: { subject: SubjectItem }) {
   useEffect(() => {
     try {
       localStorage.setItem(storageKey, JSON.stringify(messages));
-    } catch (e) {
-      console.error("Ошибка сохранения истории чата:", e);
-    }
+    } catch (e) {}
   }, [messages, storageKey]);
 
   const send = async () => {
@@ -780,11 +788,9 @@ function AiChatBox({ subject }: { subject: SubjectItem }) {
     setInput('');
 
     const loadingId = (Date.now() + 1).toString();
-    setMessages(prev => [...prev, { id: loadingId, text: '⏳ Тьютор размышляет...', isAi: true }]);
+    setMessages(prev => [...prev, { id: loadingId, text: '⏳ Тьютор думает...', isAi: true }]);
 
     try {
-      const initData = window.Telegram?.WebApp?.initData || "mock_init_data";
-
       const res = await fetch('/api/tutor', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -796,11 +802,22 @@ function AiChatBox({ subject }: { subject: SubjectItem }) {
       });
 
       const data = await res.json();
+
+      if (!res.ok || data.error) {
+        setMessages(prev => prev.filter(m => m.id !== loadingId).concat({
+          id: Date.now().toString(),
+          text: `❌ Ошибка: ${data.error || 'Не удалось получить ответ'}`,
+          isAi: true
+        }));
+        return;
+      }
+
       const cleanReply = (data.reply || '').replace(/\*|_/g, '');
 
       setMessages(prev => prev.filter(m => m.id !== loadingId).concat({
         id: Date.now().toString(),
-        text: res.ok ? cleanReply : `❌ Ошибка сервера: ${data.error || 'Не удалось получить ответ'}`,
+        text: cleanReply,
+        imageUrl: data.imageUrl || null,
         isAi: true
       }));
 
@@ -814,7 +831,7 @@ function AiChatBox({ subject }: { subject: SubjectItem }) {
   };
 
   return (
-    <div className="bg-white/90 backdrop-blur-xl border border-white rounded-3xl shadow-xl shadow-indigo-100 flex flex-col h-[450px] overflow-hidden">
+    <div className="bg-white/90 backdrop-blur-xl border border-white rounded-3xl shadow-xl shadow-indigo-100 flex flex-col h-[480px] overflow-hidden">
       <div className="bg-indigo-50 border-b border-indigo-100 px-4 py-3 flex items-center justify-between">
         <div className="flex items-center gap-2">
           <span className="text-lg">{subject.icon}</span>
@@ -839,7 +856,16 @@ function AiChatBox({ subject }: { subject: SubjectItem }) {
             key={m.id}
             className={`max-w-[85%] p-3.5 rounded-2xl text-xs leading-relaxed break-words whitespace-pre-wrap font-medium ${m.isAi ? 'bg-indigo-50/80 border border-indigo-100/60 text-indigo-950 self-start' : 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white self-end ml-auto shadow-md shadow-blue-500/20'}`}
           >
-            {m.text}
+            {m.isAi && m.imageUrl && (
+              <div className="mb-3 overflow-hidden rounded-xl border border-indigo-200 bg-white shadow-sm">
+                <img
+                  src={m.imageUrl}
+                  alt="Чертеж или график к задаче"
+                  className="w-full h-auto object-contain max-h-52"
+                />
+              </div>
+            )}
+            <div>{m.text}</div>
           </motion.div>
         ))}
       </div>
@@ -908,7 +934,6 @@ function ParentView({ onBack }: { onBack: () => void }) {
     <div className="w-full flex-1 flex flex-col pb-6">
       <Header title="Кабинет родителя" onBack={onBack} />
       <div className="flex-1 px-4 py-3 space-y-4">
-
         <div className="bg-white/90 backdrop-blur-xl border border-white p-5 rounded-3xl shadow-xl shadow-indigo-100">
           <h3 className="font-extrabold text-sm mb-3 text-indigo-950">Привязать аккаунт ребенка</h3>
           <div className="flex gap-2">
@@ -993,7 +1018,6 @@ function TeacherView({ onBack }: { onBack: () => void }) {
     <div className="w-full flex-1 flex flex-col pb-6">
       <Header title="Кабинет преподавателя" onBack={onBack} />
       <div className="flex-1 px-4 py-3 space-y-4">
-
         <div className="bg-white/90 backdrop-blur-xl border border-white p-5 rounded-3xl shadow-xl shadow-indigo-100">
           <div className="flex justify-between items-center mb-4">
             <div>
@@ -1060,7 +1084,6 @@ function TeacherRow({ name, progress, status, isWarn }: { name: string; progress
   );
 }
 
-/* Общий чат для родителей и учителей */
 function SimpleConsultantBox({ roleName }: { roleName: string }) {
   const storageKey = `ct_tutor_chat_${roleName.replace(/\s+/g, '_')}`;
   const [messages, setMessages] = useState(() => {
@@ -1115,7 +1138,6 @@ function SimpleConsultantBox({ roleName }: { roleName: string }) {
   );
 }
 
-/* Вспомогательные компоненты */
 function Header({ title, onBack }: { title: string; onBack: () => void }) {
   return (
     <div className="flex items-center justify-between px-4 py-3 border-b border-indigo-100/60 bg-white/80 backdrop-blur-md sticky top-0 z-40 w-full">
